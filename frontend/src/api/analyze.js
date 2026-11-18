@@ -2,6 +2,8 @@ import { isTerminal, validateRun } from '../utils/runState.js';
 import { request } from './client';
 
 export async function createRun(spec, file, signal, key) {
+  if (spec.parent_run) return validateRun(await request(`/runs/${encodeURIComponent(spec.parent_run)}/signal-check`,
+    { method: 'POST', signal, headers: { 'Idempotency-Key': key } }));
   let body = spec;
   if (file) {
     body = new FormData();

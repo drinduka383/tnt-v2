@@ -3,8 +3,8 @@ import { toPercent } from '../utils/normalizeResults.js';
 
 const number = (value, digits = 2) => typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString(undefined, { maximumFractionDigits: digits }) : 'Not recorded';
 
-const sourceLabels = { catalog: 'Published catalog', observation: 'Light curve' };
-const sourceStates = { ready: 'Available', empty: 'No usable data', failed: 'Could not load' };
+const sourceLabels = { catalog: 'Published catalog', observation: 'Light curve', followup: 'Published follow-up' };
+const sourceStates = { ready: 'Available', empty: 'No usable data', failed: 'Could not load', unavailable: 'Could not load', skipped: 'Not checked' };
 const modelStates = { scored: 'Model scored', partially_scored: 'Some candidates scored',
   unscored: 'Model not scored', unavailable: 'Model unavailable', no_candidates: 'No candidates to score' };
 const featureLabels = { st_loggerr2: 'lower surface gravity uncertainty', pl_orbpererr1: 'upper orbital period uncertainty',
@@ -31,13 +31,63 @@ function PublishedSignal({ candidate }) {
       <p className="muted">A dip can come from any star in the aperture. To locate it, compare in-transit and out-of-transit pixel images or use higher resolution follow-up.</p>
     </> : <p className="muted">{({ missing_ephemeris: 'A usable period, epoch and duration are required.',
       insufficient_coverage: 'This observation covers fewer than two usable predicted transits.',
+      skipped_limit: 'The automatic timing check is limited to the first three published candidates.',
+      skipped_no_observation: 'The timing check needs a light curve.',
       unavailable: 'The published timing check could not be completed.' })[check.status]}</p>}
   </details>;
 }
 
-export default function EvidenceResults({ run, onRetry, retryLabel = 'Retry this target' }) {
+const checkReasons = {
+  insufficient_event_coverage: 'Too few predicted events had measurements in the dip and on both sides.',
+  mixed_or_insensitive_measurements: 'The predicted windows had mixed or insufficient measurements.',
+  consistent_dimming_at_predicted_times: 'The independent data show dimming at the predicted times.',
+  original_depth_recoverable_at_predicted_times: 'A dip close to the original depth was recoverable in these windows, but was absent from the measured flux.',
+  different_photometry: 'The independent extraction may change the depth of the dip, so its absence here is inconclusive.',
+  no_independent_sector: 'The archive listed no other sector.',
+  independent_observation_unavailable: 'The independent observation could not be downloaded or measured.',
+  independent_cadence_too_coarse: 'The independent exposures are too far apart for this dip duration.',
+  timing_prediction_too_far: 'The new observations are too far from the original data for the trial timing to be reliable.',
+};
+
+function EventTable({ events }) {
+  return <div className="table-scroll"><table>
+    <thead><tr><th>Predicted time (BJD)</th><th>Samples in dip</th><th>Before / after</th><th>Measured depth (ppm)</th></tr></thead>
+    <tbody>{events.map(event => <tr key={event.cycle}>
+      <td>{number(event.midpoint_bjd, 5)}</td><td>{event.in_dip}</td><td>{event.before} / {event.after}</td>
+      <td>{event.depth_ppm == null ? 'Insufficient coverage' : number(event.depth_ppm, 0)}</td>
+    </tr>)}</tbody>
+  </table></div>;
+}
+
+function SignalCheckResult({ run }) {
+  const check = run.result.signal_check;
+  const verdict = { repeats: 'Dip repeats at predicted times', did_not_repeat: 'Dip did not repeat at predicted times', inconclusive: 'Inconclusive' }[check.status];
+  return <article className="evidence-result">
+    <h2>{verdict}</h2><p>{checkReasons[check.reason]}</p>
+    <p className="muted">This checks a fixed {number(check.proposed_period_days, 5)}-day schedule. Repetition alone cannot identify the source or confirm a planet.</p>
+    <a href={`?run=${encodeURIComponent(run.spec.parent_run)}`}>Back to original analysis</a>
+    {run.spec.published_context?.length > 0 && <details className="result-section" open>
+      <summary>Published follow-up for this star</summary>
+      <ul>{run.spec.published_context.map(row => <li key={row.id}>TOI {row.id}: {dispositions[row.disposition] || row.disposition}
+        {row.followup?.comment && <>. {row.followup.comment.replace(/\bNEB\b/g, 'nearby eclipsing binary')}</>}
+      </li>)}</ul>
+    </details>}
+    <section className="result-section"><h3>Original events, sector {check.source_sector}</h3><EventTable events={check.events} />
+      {check.refits.length > 0 ? <details open><summary>Period after omitting one event</summary><ul>{check.refits.map(refit =>
+        <li key={refit.omitted_cycle}>Cycle {refit.omitted_cycle}: {number(refit.best_period_days, 5)} days</li>)}</ul></details>
+        : <p>No event had enough coverage for a leave-one-out refit.</p>}
+    </section>
+    {check.independent_sector != null && <section className="result-section"><h3>Independent data, sector {check.independent_sector}</h3>
+      {check.independent_events && <EventTable events={check.independent_events} />}
+      {check.injection_recovered != null && <p>Original-depth simulated dip at these times: {check.injection_recovered ? 'recoverable' : 'not reliably recovered'}.</p>}
+    </section>}
+  </article>;
+}
+
+export default function EvidenceResults({ run, onCheck, onRetry, retryLabel = 'Retry this target' }) {
   const result = run.result;
   if (!result) return null;
+  if (result.signal_check) return <SignalCheckResult run={run} />;
   const processed = result.processed_json || [];
   const plots = processed.flatMap(item => item.visualizations || []);
   const photometry = processed[0]?.photometry;
@@ -105,7 +155,10 @@ export default function EvidenceResults({ run, onRetry, retryLabel = 'Retry this
       {photometry && <p className="muted">Showing {number(photometry.plotted_samples,0)} of {number(photometry.samples,0)} actual samples. The CSV retains all valid samples.</p>}
     </figure>)}
     {quality && <section className="result-section"><h3>Transit search</h3>
-      <p>{quality.message || (quality.exploratory_signal ? 'An exploratory periodic signal passed the search rule. It requires further vetting.' : 'No strong transit signal passed the current search rule. This does not establish that the star has no planets.')}</p>
+      {onCheck && isTess && fit.midpoint_bjd != null && observation?.group != null &&
+        Number.isFinite(result.manual_search?.raw?.ra) && Number.isFinite(result.manual_search?.raw?.dec) &&
+        <button type="button" className="secondary" onClick={onCheck}>Check this signal</button>}
+      <p>{quality.message || ((quality.outcome ? quality.outcome === 'screen_passed' : quality.exploratory_signal) ? 'An exploratory periodic signal passed the search rule. It requires further vetting.' : 'No strong transit signal passed the current search rule. This does not establish that the star has no planets.')}</p>
       {fit.period_days != null && <dl className="evidence-metrics"><div><dt>Best trial period</dt><dd>{number(fit.period_days,4)} days</dd></div><div><dt>Fitted depth</dt><dd>{number(fit.depth_fraction * 1e6)} ppm</dd></div><div><dt>Covered events</dt><dd>{number(fit.transits_covered,0)}</dd></div><div><dt>Depth / error</dt><dd>{number(fit.snr)}</dd></div></dl>}
     </section>}
     {candidates.map(candidate => <PublishedSignal key={candidate.id} candidate={candidate} />)}

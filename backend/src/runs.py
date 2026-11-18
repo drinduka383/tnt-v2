@@ -67,14 +67,20 @@ class RunService:
 
     def recent(self):
         with self.connect() as db:
-            rows = db.execute('SELECT id,spec,status,result,created FROM runs ORDER BY created DESC LIMIT 10').fetchall()
+            rows = db.execute("""
+                SELECT id,spec,status,created,
+                       COALESCE(json_extract(result, '$.evidence_status') = 'ready', 0)
+                       OR COALESCE(json_array_length(result, '$.processed_json') > 0, 0)
+                       OR json_type(result, '$.signal_check') = 'object'
+                       OR EXISTS(SELECT 1 FROM json_each(result, '$.candidates') AS candidate
+                                 WHERE json_extract(candidate.value, '$.status') = 'scored') AS has_evidence
+                FROM runs ORDER BY created DESC LIMIT 10
+            """).fetchall()
         records = []
         for row in rows:
             spec = json.loads(row['spec'])
-            result = json.loads(row['result']) if row['result'] else None
-            records.append({'id':row['id'], 'target':spec['target'], 'evidence':spec['evidence'],
-                            'status':row['status'], 'has_evidence':bool(result and (result.get('evidence_status') == 'ready' or result.get('processed_json') or any(item.get('status') == 'scored' for item in result.get('candidates',[])))),
-                            'created':row['created']})
+            records.append({'id': row['id'], 'target': spec['target'], 'evidence': spec['evidence'],
+                            'status': row['status'], 'has_evidence': bool(row['has_evidence']), 'created': row['created']})
         return records
 
     def create(self, spec, key=None, upload=None):

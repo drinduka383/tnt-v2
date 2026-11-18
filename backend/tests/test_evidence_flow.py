@@ -60,7 +60,7 @@ class EvidenceFlowTest(unittest.TestCase):
                     accepted = client.post('/runs', json={'mission': 'tess', 'id': host['id'], 'evidence': 'combined'})
                     self.assertEqual(accepted.status_code, 202)
                     identifier = accepted.json['id']
-                    with patch('src.analysis.resolve_target', side_effect=[catalog]), patch.object(AnalysisPipeline, '_observation', side_effect=[obs]), patch('src.services.tess_vetting.followup_notes', return_value={}):
+                    with patch('src.analysis.resolve_target', side_effect=[catalog]), patch.object(AnalysisPipeline, '_observation', side_effect=[obs]), patch('src.services.tess_vetting.followup_notes', return_value={'status':'empty', 'notes':{}}):
                         runs.execute(identifier)
                     record = client.get(f'/runs/{identifier}').json
                     self.assertEqual(record['status'], status)

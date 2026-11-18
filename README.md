@@ -27,6 +27,8 @@ Open http://127.0.0.1:5188/start. Enter a target and choose **Analyze target**, 
 
 Try **TIC 50365310** for a verified example with both a light curve and a model-scored catalog candidate. For catalog-only Kepler, try KIC 11446443 with the balanced model. A real NASA catalog run for this host completed successfully during acceptance. Archive data may change. Many TESS candidates legitimately remain unscored because required measurements are missing. Uploaded FITS must embed the matching TICID or KEPLERID, contain a supported observation extension, and fit within the 32 MB request limit.
 
+**Check this signal** tests a saved TESS fit event by event and tries one independent sector. See [the workflow and pilot results](docs/SIGNAL-CHECK.md).
+
 ## Pick targets from the sky
 
 Pan or zoom, then click **Search this view**. Cyan circles and the matching keyboard-accessible list identify TIC stars actually on screen. Click a circle or list entry, then use **Analyze TIC** beside **Search this view**. The selected ID also fills the form. The run checks observation availability while acquiring evidence. When the supported TESS light-curve index is empty, the app checks full-frame coverage and can extract exploratory aperture photometry from one TESScut sector. Combined TESS results also show public ExoFOP follow-up comments when available and check the published transit and half-period windows in your observation.

@@ -112,7 +112,7 @@ export default function Start() {
     if (actionLock.current) return;
     const spec = retrySpec || { ...target, id: target.id.trim(), evidence, model_name: modelName.trim() };
     const upload = capturedUpload ?? (spec.evidence === 'upload' ? file : null);
-    if (!spec.id || (spec.evidence === 'upload' && !upload)) return;
+    if ((!spec.id && !spec.parent_run) || (spec.evidence === 'upload' && !upload)) return;
     const sameAttempt = submission.current?.spec && JSON.stringify(submission.current.spec) === JSON.stringify(spec)
       && submission.current.upload === upload;
     if (!sameAttempt) submission.current = { spec, upload, key: crypto.randomUUID() };
@@ -140,7 +140,7 @@ export default function Start() {
     setPollError(null);
     if (run?.spec) {
       setTarget({ mission:run.spec.target.mission, id:`${run.spec.target.namespace} ${run.spec.target.id}` });
-      setEvidence(run.spec.evidence);
+      setEvidence(run.spec.evidence === 'signal_check' ? 'combined' : run.spec.evidence);
       setModelName(run.spec.model?.name || 'balanced');
       setMapSelected(null);
     }
@@ -177,6 +177,7 @@ export default function Start() {
   function retryRun() {
     const spec = run?.spec;
     if (!spec) return;
+    if (spec.parent_run) { submit(null, { parent_run: spec.parent_run }); return; }
     submit(null, { mission: spec.target.mission, id: `${spec.target.namespace} ${spec.target.id}`, evidence: spec.evidence, model_name: spec.model?.name || 'balanced' });
   }
   const result = run?.result;
@@ -185,18 +186,18 @@ export default function Start() {
   const connectionError = pollError?.id === runId ? pollError.message : null;
   const activeRun = run && !isTerminal(run.status);
   const busy = actionInFlight || Boolean(!connectionError && (activeRun || (runId && !run)));
-  const backLabel = cancelling ? 'Cancelling?' : activeRun ? 'Cancel and return' : 'Change target';
-  const stageLabels = { queued: 'Waiting for the worker', resolving_target: 'Resolving the target', loading_catalog: 'Looking up published candidates', locating_tess_pixels: 'Checking full-frame TESS coverage', downloading_tess_pixels: 'Downloading a TESS pixel cutout', checking_published_signal: 'Checking the published transit times and follow-up', acquiring_observation: 'Looking up and downloading observations', extracting_features: 'Reading the light curve', classifying: 'Checking model eligibility' };
+  const backLabel = cancelling ? 'Cancelling' : activeRun ? 'Cancel and return' : runId && !run ? 'Leave saved run' : 'Change target';
+  const stageLabels = { queued: 'Waiting for the worker', checking_event_windows: 'Measuring dips and refitting after removing each event', checking_independent_sector: 'Finding an independent TESS observation', measuring_independent_events: 'Testing the prediction in the independent data', resolving_target: 'Resolving the target', loading_catalog: 'Looking up published candidates', locating_tess_pixels: 'Checking full-frame TESS coverage', downloading_tess_pixels: 'Downloading a TESS pixel cutout', checking_published_signal: 'Checking the published transit times and follow-up', acquiring_observation: 'Looking up and downloading observations', extracting_features: 'Reading the light curve', classifying: 'Checking model eligibility' };
   const runTarget = run?.spec?.target;
   const targetLabel = runTarget ? `${runTarget.namespace} ${runTarget.id}` : target.id || 'No target selected';
   const plotCount = result?.processed_json?.reduce((total,item) => total + (item.visualizations?.length || 0), 0) || 0;
-  const hasResult = result && (result.sources || plotCount > 0 || result.candidates?.length > 0);
+  const hasResult = result && (result.signal_check || result.sources || plotCount > 0 || result.candidates?.length > 0);
   const sourceFailed = Object.values(result?.sources || {}).some(source => source.status === 'failed');
   const canUpdate = run?.spec?.evidence === 'combined' && run.spec.target.mission === 'tess'
     && result?.provenance?.processing_version === 'tnt-v2-evidence-3';
 
   const formTarget = run?.spec ? { mission:run.spec.target.mission, id:`${run.spec.target.namespace} ${run.spec.target.id}` } : target;
-  const formEvidence = run?.spec?.evidence || evidence;
+  const formEvidence = run?.spec?.evidence === 'signal_check' ? 'combined' : run?.spec?.evidence || evidence;
 
   return <main className="workbench">
     <aside className="workbench-panel">
@@ -234,7 +235,7 @@ export default function Start() {
       <p className="sidebar-note">Sky imagery, observations and model scores are separate evidence sources. A score does not confirm a planet.</p>
     </aside>
     <section className="workbench-content">
-      <header className="view-header"><div className="view-switch" aria-label="Workspace view"><button type="button" aria-pressed={pane === 'map'} onClick={() => { setMapMounted(true); setPane('map'); }}>Sky map</button><button type="button" aria-pressed={pane === 'evidence'} onClick={() => setPane('evidence')}>Evidence</button></div><span className="current-target">{targetLabel}</span>{runId && <button type="button" className="mobile-target-action secondary" disabled={actionInFlight} onClick={back}>{activeRun ? 'Cancel' : 'New target'}</button>}</header>
+      <header className="view-header"><div className="view-switch" aria-label="Workspace view"><button type="button" aria-pressed={pane === 'map'} onClick={() => { setMapMounted(true); setPane('map'); }}>Sky map</button><button type="button" aria-pressed={pane === 'evidence'} onClick={() => setPane('evidence')}>Evidence</button></div><span className="current-target">{targetLabel}</span>{runId && <button type="button" className="mobile-target-action secondary" disabled={actionInFlight} onClick={back}>{activeRun ? 'Cancel' : !run ? 'Leave run' : 'New target'}</button>}</header>
       {pane === 'map' && !runId && <div className="map-analysis-action">
         <button type="button" className="secondary" onClick={searchMap} disabled={actionInFlight || !region || region.radius > .5 || discovery.status === 'loading'}>
           {discovery.status === 'loading' ? 'Searching region?' : 'Search this view'}
@@ -244,11 +245,11 @@ export default function Start() {
       </div>}
       <div className="map-stage" hidden={pane !== 'map'}>{mapMounted && <SkyAtlas target={atlasTarget} fov={.5} stars={runId || submitting ? [] : mapTargets} selectedId={mapSelected?.id} onViewChange={onMapView} onSelect={chooseMapStar} onTargetsVisible={onTargetsVisible} />}</div>
       <div ref={evidencePane} className="evidence-stage" hidden={pane !== 'evidence'}>
-        {connectionError && <div role="alert" className="error-card"><h2>Connection interrupted</h2><p>{connectionError}</p><button onClick={() => setPollVersion(value => value+1)}>Reconnect to saved run</button></div>}
+        {connectionError && <div role="alert" className="error-card"><h2>Connection interrupted</h2><p>{connectionError}</p><button onClick={() => { setPollError(null); setPollVersion(value => value+1); }}>Reconnect to saved run</button> <button type="button" className="secondary" disabled={actionInFlight} onClick={returnToTarget}>Back to target selection</button></div>}
         {actionError && <div role="alert" className="error-card"><h2>{transfer.status === 'submit_error' ? 'Could not start analysis' : 'Could not cancel analysis'}</h2><p>{actionError}</p>{transfer.status === 'submit_error' && <button onClick={() => submit(null, transfer.spec, transfer.upload)}>Retry starting analysis</button>}</div>}
         {busy && <section className="loading-evidence" aria-live="polite"><span className="status-chip">{run?.status === 'accepted' && !submitting ? 'Queued' : 'Working'}</span><h2>{cancelling ? 'Cancelling analysis' : 'Loading evidence'}</h2><p>{submitting ? 'Starting a saved analysis run?' : cancelling ? 'Waiting for the service to confirm cancellation.' : stageLabels[run?.stage] || 'Contacting the analysis service?'}</p></section>}
         {!submitting && run?.error && <section className="error-card" role="alert"><span className="eyebrow">{run.status === 'insufficient_evidence' ? 'No usable evidence returned' : 'Source request failed'}</span><h2>{run.error.code === 'upstream_unavailable' ? 'The archive did not respond' : 'This run could not finish'}</h2><p>{run.error.message}</p><p className="muted">This is a data-acquisition issue, not a planetary verdict.</p><button onClick={retryRun} disabled={submitting || (run.spec?.evidence === 'upload' && !file)}>Retry this target</button>{run.spec?.evidence === 'upload' && !file && <p>Change target to reselect your FITS file.</p>}</section>}
-        {hasResult && <EvidenceResults run={run} onRetry={(sourceFailed || canUpdate) && !actionInFlight ? retryRun : undefined} retryLabel={canUpdate ? 'Run updated analysis' : undefined} />}
+        {hasResult && <EvidenceResults run={run} onCheck={actionInFlight ? undefined : () => submit(null, { parent_run: run.id })} onRetry={(sourceFailed || canUpdate) && !actionInFlight ? retryRun : undefined} retryLabel={canUpdate ? 'Run updated analysis' : undefined} />}
         {!busy && !run?.error && !hasResult && !connectionError && !actionError && <section className="empty-evidence"><p className="eyebrow">Observation workspace</p><h2>{run?.status === 'cancelled' ? 'Run cancelled' : 'Choose a target to begin'}</h2><p>Load an observation to see the measured light curve, source metadata and downloadable data here.</p><button type="button" className="secondary" onClick={() => { setMapMounted(true); setPane('map'); }}>Explore the sky map</button></section>}
       </div>
     </section>

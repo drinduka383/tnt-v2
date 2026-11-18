@@ -1,4 +1,4 @@
-﻿"""Published TESS follow-up and a descriptive check at the catalog ephemeris."""
+"""Published TESS follow-up and a descriptive check at the catalog ephemeris."""
 import csv
 from decimal import Decimal
 from io import BytesIO
@@ -16,7 +16,7 @@ EXOFOP = 'https://exofop.ipac.caltech.edu/tess/download_toi.php'
 def followup_notes(identifier, candidates):
     identifiers = [item['id'] for item in candidates if re.fullmatch(r'[0-9]+\.[0-9]{1,2}', item['id'])]
     if not identifiers:
-        return {}
+        return {'status': 'skipped', 'notes': {}}
     prefix = identifiers[0].split('.')[0]
     try:
         with requests.get(EXOFOP, params={'toi': prefix, 'output': 'csv'}, stream=True, timeout=(4, 10)) as response:
@@ -25,10 +25,13 @@ def followup_notes(identifier, candidates):
             for part in response.iter_content(8192):
                 content.extend(part)
                 if len(content) > 128 * 1024:
-                    return {}
-        rows = list(csv.DictReader(content.decode('utf-8-sig').splitlines()))
+                    return {'status': 'unavailable', 'notes': {}}
+        reader = csv.DictReader(content.decode('utf-8-sig').splitlines())
+        if not {'TIC ID', 'TOI', 'Comments'}.issubset(reader.fieldnames or []):
+            return {'status': 'unavailable', 'notes': {}}
+        rows = list(reader)
     except (requests.RequestException, UnicodeError, csv.Error):
-        return {}
+        return {'status': 'unavailable', 'notes': {}}
     result = {}
     for row in rows:
         toi = row.get('TOI', '') or ''
@@ -38,7 +41,8 @@ def followup_notes(identifier, candidates):
                                 'comment': (row.get('Comments') or '').strip()[:500],
                                 'updated': row.get('Date TOI Updated (UTC)'),
                                 'source': f'{EXOFOP}?toi={toi}&output=csv'}
-    return {toi: result[Decimal(toi)] for toi in identifiers if Decimal(toi) in result}
+    notes = {toi: result[Decimal(toi)] for toi in identifiers if Decimal(toi) in result}
+    return {'status': 'ready' if notes else 'empty', 'notes': notes}
 
 
 def check_ephemeris(time, flux, row):

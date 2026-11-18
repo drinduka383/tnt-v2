@@ -97,6 +97,37 @@ def create_app(data_dir=None, pipeline=None, background=True):
         record = runs.create(spec, key, upload)
         return jsonify(record), 202 if record['status'] in ('accepted', 'running') else 200
 
+    @app.post('/runs/<identifier>/signal-check')
+    def signal_check(identifier):
+        parent = runs.get(identifier)
+        result = parent['result'] or {}
+        target = result.get('provenance', {}).get('target') or {}
+        observation = result.get('provenance', {}).get('observation', {})
+        coords = result.get('manual_search', {}).get('raw', {})
+        processed = result.get('processed_json') or [{}]
+        fit = processed[0].get('parameters', {})
+        from src.data_mapper import number
+        ra, dec, period, epoch, hours, depth = map(number, [coords.get('ra'), coords.get('dec'),
+            fit.get('period_days'), fit.get('midpoint_bjd'), fit.get('duration_hours'), fit.get('depth_fraction')])
+        sector = observation.get('group')
+        if (parent['status'] != 'succeeded' or target.get('namespace') != 'TIC' or
+                not isinstance(sector, int) or None in (ra, dec, period, epoch, hours, depth) or
+                not (0 <= ra < 360 and -90 <= dec <= 90 and .5 <= period <= 20 and
+                     2400000 <= epoch <= 2600000 and 0 < hours < 24 * period / 6 and 0 < depth < 1) or
+                not (runs.root / identifier / 'lightcurve.csv').is_file()):
+            raise AnalysisError('This run has no saved TESS timing and sector to check.', 422, 'signal_check_unavailable')
+        key = request.headers.get('Idempotency-Key')
+        if key is not None and not re.fullmatch(r'[A-Za-z0-9_-]{1,100}', key):
+            raise AnalysisError('Invalid Idempotency-Key.', 400, 'invalid_request')
+        published = [{'id': row['id'], 'disposition': row['catalog_disposition'],
+                      'followup': row.get('followup')} for row in result.get('candidates', [])
+                     if row.get('catalog_disposition')]
+        record = runs.create({'target': target, 'evidence': 'signal_check', 'model': {}, 'parent_run': identifier,
+                              'published_context': published,
+                              'coordinates': {'ra': ra, 'dec': dec}, 'sector': sector, 'author': observation.get('author'), 'period': period,
+                              'epoch': epoch, 'duration': hours / 24, 'depth': depth}, key)
+        return jsonify(record), 202 if record['status'] in ('accepted', 'running') else 200
+
     @app.get('/runs/<identifier>')
     def run_status(identifier):
         return jsonify(runs.get(identifier))

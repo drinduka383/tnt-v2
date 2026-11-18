@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -69,5 +69,7 @@ class TessFallbackTest(unittest.TestCase):
         with patch('src.services.tess_vetting.requests.get') as get:
             get.return_value.__enter__.return_value.iter_content.return_value = [data]
             result = followup_notes('123', [{'id': '1000.01'}, {'id': '1000.02'}])
+        self.assertEqual(result['status'], 'ready')
+        result = result['notes']
         self.assertEqual(set(result), {'1000.01'})
         self.assertEqual(result['1000.01']['comment'], 'retired as NEB')

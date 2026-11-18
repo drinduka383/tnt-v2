@@ -18,7 +18,7 @@ class ExoplanetParameterProcessor:
         if mission not in MODEL_FAMILY:
             raise ValueError('Unsupported mission')
 
-    def process(self, print_json=False):
+    def load_samples(self):
         observation = lk.read(self.path)
         if hasattr(observation, 'to_lightcurve'):
             mask = observation.pipeline_mask
@@ -32,8 +32,10 @@ class ExoplanetParameterProcessor:
         if 'quality' in observation.colnames:
             observation = observation[observation.quality == 0]
         observation = observation.remove_nans().normalize()
-        t, flux = np.asarray(observation.time.jd), np.asarray(observation.flux.value)
-        return self.process_samples(t, flux)
+        return np.asarray(observation.time.jd), np.asarray(observation.flux.value)
+
+    def process(self, print_json=False):
+        return self.process_samples(*self.load_samples())
 
     def process_samples(self, t, flux):
         good = np.isfinite(t) & np.isfinite(flux)
@@ -90,6 +92,10 @@ class ExoplanetParameterProcessor:
                     measurements.update(koi_num_transits=count, koi_model_snr=snr)
             except (ValueError, RuntimeError, ArithmeticError):
                 quality.update(search_status='unavailable', message='Photometry loaded; transit fitting was not reliable for this observation.')
+        if quality['search_status'] == 'completed':
+            quality['outcome'] = 'screen_passed' if quality['exploratory_signal'] else 'below_threshold'
+        else:
+            quality['outcome'] = 'failed' if quality['search_status'] == 'unavailable' else 'skipped'
         plots = []
         display = np.linspace(0, len(t)-1, min(6000,len(t)), dtype=int)
         for name, x in [('normalized_light_curve', relative), ('phase_folded_light_curve', folded)]:

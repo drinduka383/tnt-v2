@@ -149,6 +149,9 @@ class AnalysisPipeline:
     def __call__(self, spec, directory, stage):
         directory = Path(directory)
         mode = spec['evidence']
+        if mode == 'signal_check':
+            from src.services.signal_check import check_saved_signal
+            return check_saved_signal(spec, directory, stage, self.observation_index)
         model = spec['model']
         stage('resolving_target')
         host = dict(spec['target'])
@@ -219,17 +222,26 @@ class AnalysisPipeline:
         if mode == 'combined' and host['mission'] == 'tess' and candidates:
             stage('checking_published_signal')
             from src.services.tess_vetting import check_ephemeris, followup_notes
-            notes = followup_notes(host['id'], candidates)
+            followup = followup_notes(host['id'], candidates)
+            sources['followup'] = {'status': followup['status']}
+            notes = followup['notes']
             csv_path = directory / 'lightcurve.csv'
             time_flux = None
             if processed and csv_path.is_file():
                 import numpy as np
-                time_flux = np.loadtxt(csv_path, delimiter=',', skiprows=1, ndmin=2).T
+                try:
+                    time_flux = np.loadtxt(csv_path, delimiter=',', skiprows=1, ndmin=2).T
+                except (OSError, ValueError):
+                    logging.exception('Could not read saved photometry for optional timing check')
             for candidate in candidates:
                 if candidate['id'] in notes:
                     candidate['followup'] = notes[candidate['id']]
-            for candidate, raw in zip(candidates[:3], (catalog or [])[:3]):
-                if time_flux is not None:
+            for index, (candidate, raw) in enumerate(zip(candidates, catalog)):
+                if index >= 3:
+                    candidate['ephemeris'] = {'status': 'skipped_limit'}
+                elif time_flux is None:
+                    candidate['ephemeris'] = {'status': 'unavailable' if processed else 'skipped_no_observation'}
+                else:
                     try:
                         candidate['ephemeris'] = check_ephemeris(*time_flux, raw)
                     except (ValueError, ArithmeticError, RuntimeError):
