@@ -1,0 +1,101 @@
+------------------------------------------TRAIN------------------------------------------
+
+BALANCED
+
+{
+  "model_type": "TOI",              // Optional: e.g., 'TOI', 'KOI'
+  "optimization_type": "balanced",  // Required
+  "target_column": "is_planet",     // Optional (default is 'is_planet')
+  "model_name": "TOI_balanced_20251005_123456", // Optional (auto-generated if omitted)
+  "custom_params": {                // Optional tuning (can leave empty or exclude entirely)
+    "max_depth": 4,                 // Optional
+    "learning_rate": 0.1,           // Optional
+    "n_estimators": 200             // Optional
+  },
+  "data": [ ... ]                   // Required: list of training data (dicts)
+}
+
+
+
+PRECISION
+
+{
+  "model_type": "TOI",              // Optional
+  "optimization_type": "precision", // Required
+  "target_column": "is_planet",     // Optional
+  "model_name": "TOI_precision_20251005_123456", // Optional
+  "weight_value": 1.8,              // Optional: increase to penalize false positives more
+  "custom_params": {                // Optional LightGBM params
+    "learning_rate": 0.05,          // Optional
+    "num_leaves": 15,               // Optional
+    "max_depth": 4                  // Optional
+  },
+  "data": [ ... ]                   // Required
+}
+
+
+RECALL
+
+{
+  "model_type": "TOI",              // Optional
+  "optimization_type": "recall",    // Required
+  "target_column": "is_planet",     // Optional
+  "model_name": "TOI_recall_20251005_123456", // Optional
+  "weight_value": 250,              // Optional: increase to penalize false negatives more
+  "custom_params": {                // Optional LightGBM params
+    "learning_rate": 0.05,          // Optional
+    "max_depth": 3,                 // Optional
+    "num_leaves": 10                // Optional
+  },
+  "data": [ ... ]                   // Required
+}
+
+
+
+
+
+
+
+example
+
+{
+  "model_type": "TOI",
+  "optimization_type": "recall",
+  "model_name": "recall_model",
+  "weight_value": 350,
+  "custom_params": {
+    "max_depth": 4,
+    "learning_rate": 0.1,
+    "n_estimators": 200
+  }
+}
+
+
+
+
+-------------------------------------PREDICT---------------------------------------------
+you can make one or more predictions, if more than one just attach the data in the "data" array!
+FOR TOI
+{
+  "model_type": "TOI",
+  "optimization_type": "recall",  //can be recall, precision or balanced
+  "model_name": "toi_recall_model_20251005",
+  "data": [
+    {
+    'koi_prad': 0.5,
+    'koi_dor',
+    'koi_ror',
+    'koi_num_transits',
+    'koi_duration_err1',
+    'koi_prad_err1',
+    'koi_period_err2',
+    'koi_srad_err1',
+    'koi_insol',
+    'eng_transit_probability',
+    'koi_model_snr',
+    'koi_srho',
+    'koi_max_mult_ev',
+    'koi_teq'
+    }
+  ]
+}

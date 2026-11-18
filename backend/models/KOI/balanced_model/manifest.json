@@ -1,0 +1,67 @@
+{
+  "family": "KOI",
+  "schema": "catalog-shared-signed-v2",
+  "threshold": 0.5,
+  "sha256": "09552bf276ab70695c06886ff91493cd4434f9140b6911c2ed332f33c05987ab",
+  "features": [
+    "koi_prad",
+    "koi_dor",
+    "koi_ror",
+    "koi_num_transits",
+    "koi_duration_err1",
+    "koi_prad_err1",
+    "koi_period_err2",
+    "koi_srad_err1",
+    "koi_insol",
+    "eng_transit_probability",
+    "koi_model_snr",
+    "koi_srho",
+    "koi_max_mult_ev",
+    "koi_teq"
+  ],
+  "preprocessing": "shared catalog adapter; signed catalog uncertainties; geometric R-star/a",
+  "dataset_sha256": "2c376714e7a3665d6ede5297af1c6f70446304308eac38b672a260013af4f621",
+  "labels": {
+    "CONFIRMED": 1,
+    "CANDIDATE": 1,
+    "FALSE POSITIVE": 0
+  },
+  "split": "host-isolated 70/15/15; no resampling",
+  "evaluation": {
+    "validation": {
+      "rows": 1179,
+      "hosts": 1016,
+      "accuracy": 0.8659881255301103,
+      "precision": 0.8544,
+      "recall": 0.8885191347753744,
+      "roc_auc": 0.9336544052876117
+    },
+    "test": {
+      "rows": 1192,
+      "hosts": 1016,
+      "accuracy": 0.8573825503355704,
+      "precision": 0.8418674698795181,
+      "recall": 0.8958333333333334,
+      "roc_auc": 0.9352682602022391
+    }
+  },
+  "training_rows": 5552,
+  "best_iteration": 176,
+  "scientific_validation": "not independently validated",
+  "units": {
+    "koi_prad": "R_earth",
+    "koi_dor": "dimensionless",
+    "koi_ror": "dimensionless",
+    "koi_num_transits": "count",
+    "koi_duration_err1": "hours",
+    "koi_prad_err1": "R_earth",
+    "koi_period_err2": "days",
+    "koi_srad_err1": "R_sun",
+    "koi_insol": "Earth_flux",
+    "eng_transit_probability": "dimensionless",
+    "koi_model_snr": "dimensionless",
+    "koi_srho": "g/cm^3",
+    "koi_max_mult_ev": "dimensionless",
+    "koi_teq": "K"
+  }
+}

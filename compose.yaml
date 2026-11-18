@@ -1,0 +1,17 @@
+services:
+  backend:
+    build: ./backend
+    environment:
+      TNT_HOST: 0.0.0.0
+      TNT_DATA_DIR: /app/data
+    volumes:
+      - analysis-data:/app/data
+    restart: unless-stopped
+  frontend:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - backend
+volumes:
+  analysis-data:

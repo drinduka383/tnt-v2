@@ -1,0 +1,12 @@
+Flask==3.1.2
+waitress==3.0.2
+numpy==2.3.3
+pandas==2.3.3
+scipy==1.16.2
+astropy==7.1.0
+astroquery==0.4.11
+lightkurve==2.5.1
+matplotlib==3.10.6
+requests==2.32.5
+scikit-learn==1.7.2
+xgboost==3.0.5
