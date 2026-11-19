@@ -6,7 +6,22 @@ import { createRun, getRun, cancelRun } from '../api/analyze.js';
 import { request } from '../api/client.js';
 import { sameRegion } from '../utils/mapRegion.js';
 import { isTerminal } from '../utils/runState.js';
+import { LuArrowLeft, LuOrbit } from 'react-icons/lu';
 import './Workbench.css';
+
+const stageLabels = {
+  resolving_target: 'Resolving the target',
+  loading_catalog: 'Looking up published candidates',
+  acquiring_observation: 'Finding and downloading an observation',
+  locating_tess_pixels: 'Checking full-frame TESS coverage',
+  downloading_tess_pixels: 'Downloading TESS pixels',
+  extracting_features: 'Measuring the light curve',
+  classifying: 'Checking model eligibility',
+  checking_published_signal: 'Checking published transit times',
+  checking_event_windows: 'Measuring the original dips',
+  checking_independent_sector: 'Finding an independent TESS observation',
+  measuring_independent_events: 'Testing the predicted dips',
+};
 
 export default function Start() {
   const [params, setParams] = useSearchParams();
@@ -19,10 +34,11 @@ export default function Start() {
   const [historyError, setHistoryError] = useState(false);
   const [focus, setFocus] = useState(undefined);
   const [mapMounted, setMapMounted] = useState(() => !runId);
-  const [pane, setPane] = useState(() => runId ? 'evidence' : 'map');
+  const [selectedPane, setPane] = useState(() => runId ? 'evidence' : 'map');
   const [record, setRun] = useState(null);
   const run = record?.id === runId ? record : null;
   const [transfer, setTransfer] = useState({ status: 'idle' });
+  const pane = runId || transfer.status !== 'idle' ? selectedPane : 'map';
   const [pollError, setPollError] = useState(null);
   const submitting = transfer.status === 'submitting';
   const cancelling = transfer.status === 'cancelling';
@@ -120,7 +136,8 @@ export default function Start() {
     setPane('evidence');
     const controller = new AbortController();
     submitController.current = controller;
-    setTransfer({ status: 'submitting' });
+    setTransfer({ status: 'submitting', spec });
+    window.scrollTo(0, 0);
     try {
       const next = await createRun(spec, upload, controller.signal, submission.current.key);
       if (controller.signal.aborted) return;
@@ -185,11 +202,21 @@ export default function Start() {
 
   const connectionError = pollError?.id === runId ? pollError.message : null;
   const activeRun = run && !isTerminal(run.status);
-  const busy = actionInFlight || Boolean(!connectionError && (activeRun || (runId && !run)));
+  const checking = submitting ? Boolean(transfer.spec.parent_run) : run?.spec?.evidence === 'signal_check';
+  const pendingLabel = checking ? 'Checking the signal' : 'Analyzing the target';
+  const activity = cancelling ? { title: 'Cancelling analysis', detail: 'Waiting for confirmation.' }
+    : submitting ? { title: pendingLabel, detail: 'Submitting the request.' }
+    : !connectionError && runId && !run ? { title: 'Opening saved run' }
+    : !connectionError && activeRun ? {
+      title: pendingLabel,
+      detail: run.status === 'accepted' ? 'Queued. Waiting for an analysis worker.' : stageLabels[run.stage] || 'Preparing the analysis.',
+    } : null;
   const backLabel = cancelling ? 'Cancelling' : activeRun ? 'Cancel and return' : runId && !run ? 'Leave saved run' : 'Change target';
-  const stageLabels = { queued: 'Waiting for the worker', checking_event_windows: 'Measuring dips and refitting after removing each event', checking_independent_sector: 'Finding an independent TESS observation', measuring_independent_events: 'Testing the prediction in the independent data', resolving_target: 'Resolving the target', loading_catalog: 'Looking up published candidates', locating_tess_pixels: 'Checking full-frame TESS coverage', downloading_tess_pixels: 'Downloading a TESS pixel cutout', checking_published_signal: 'Checking the published transit times and follow-up', acquiring_observation: 'Looking up and downloading observations', extracting_features: 'Reading the light curve', classifying: 'Checking model eligibility' };
   const runTarget = run?.spec?.target;
-  const targetLabel = runTarget ? `${runTarget.namespace} ${runTarget.id}` : target.id || 'No target selected';
+  const targetLabel = submitting && !checking ? transfer.spec.id
+    : runTarget ? `${runTarget.namespace} ${runTarget.id}` : 'Saved analysis';
+  const mission = submitting && !checking ? transfer.spec.mission : runTarget?.mission;
+  const showRunWorkspace = Boolean(runId) || submitting;
   const plotCount = result?.processed_json?.reduce((total,item) => total + (item.visualizations?.length || 0), 0) || 0;
   const hasResult = result && (result.signal_check || result.sources || plotCount > 0 || result.candidates?.length > 0);
   const sourceFailed = Object.values(result?.sources || {}).some(source => source.status === 'failed');
@@ -199,11 +226,30 @@ export default function Start() {
   const formTarget = run?.spec ? { mission:run.spec.target.mission, id:`${run.spec.target.namespace} ${run.spec.target.id}` } : target;
   const formEvidence = run?.spec?.evidence === 'signal_check' ? 'combined' : run?.spec?.evidence || evidence;
 
-  return <main className="workbench">
-    <aside className="workbench-panel">
-      <header className="workspace-brand"><Link to="/">A WORLD AWAY</Link><h1>Stellar evidence</h1><p>Choose a star. Load its measurements.</p></header>
+  return <main className="workbench" data-run={showRunWorkspace} data-pane={pane}>
+    <header className="workspace-header">
+      <Link to="/" className="workspace-brand"><LuOrbit aria-hidden="true" /> A World Away</Link>
+      <nav className="view-switch" aria-label="Workspace view">
+        <button type="button" aria-pressed={pane === 'map'} onClick={() => { setMapMounted(true); setPane('map'); }}>Sky map</button>
+        <button type="button" aria-pressed={pane === 'evidence'} onClick={() => setPane('evidence')} disabled={!runId && transfer.status === 'idle'}>Analysis</button>
+      </nav>
+      <div className="workspace-actions">
+        {(recent.length > 0 || historyError) && <details className="recent-runs">
+          <summary>Recent runs</summary>
+          <div className="recent-menu">
+            {historyError && <p className="muted">Could not refresh saved runs.</p>}
+            <ul>{recent.map(item => <li key={item.id}><button type="button" aria-current={item.id === runId ? 'true' : undefined} disabled={actionInFlight} onClick={event => { event.currentTarget.closest('details').open = false; openSavedRun(item.id); }}>
+              <span>{item.target.namespace} {item.target.id}{item.evidence === 'signal_check' && <small>Repeatability check</small>}</span>
+              <small>{item.has_evidence ? 'Evidence saved' : item.status.replaceAll('_',' ')}<br />{new Date(item.created * 1000).toLocaleString([], { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' })}</small>
+            </button></li>)}</ul>
+          </div>
+        </details>}
+      </div>
+    </header>
+    {!runId && <aside className="workbench-panel" hidden={submitting}>
+      <header className="target-heading"><h1>Find a target</h1><p>Enter a catalog ID or pick a star on the sky map.</p></header>
       <form onSubmit={submit} className="target-form">
-        <fieldset disabled={Boolean(runId) || actionInFlight}>
+        <fieldset disabled={actionInFlight}>
           <label>Mission<select value={formTarget.mission} onChange={e => { setTarget({ mission: e.target.value, id: '' }); setMapSelected(null); setFile(null); }}><option value="tess">TESS</option><option value="kepler">Kepler</option></select></label>
           <label>{formTarget.mission === 'tess' ? 'TIC host or TOI candidate' : 'KIC host or KOI candidate'}<input required maxLength={40} value={formTarget.id} onChange={e => { setTarget({ ...target, id:e.target.value }); setMapSelected(null); }} placeholder={target.mission === 'tess' ? 'e.g. TIC 67882510' : 'e.g. KIC 11446443'} /></label>
           <details className="processing-options"><summary>Analysis options</summary>
@@ -211,7 +257,7 @@ export default function Start() {
           {!runId && formEvidence === 'upload' && <label>FITS file<input required type="file" accept=".fits,.fit" onChange={e => setFile(e.target.files?.[0] || null)} /></label>}
           <label>Catalog model ID<input required value={run?.spec?.model?.name || modelName} onChange={e => setModelName(e.target.value)} /></label><p className="muted">The model scores eligible published candidates.</p></details>
         </fieldset>
-        {!runId ? <button className="primary-action" disabled={submitting || !target.id.trim() || (evidence === 'upload' && !file)}>{submitting ? 'Starting...' : 'Analyze target'}</button> : <button type="button" className="secondary full-width" disabled={actionInFlight} onClick={back}>{backLabel}</button>}
+        <button className="primary-action" disabled={submitting || !target.id.trim() || (evidence === 'upload' && !file)}>{submitting ? 'Starting…' : 'Analyze target'}</button>
         {!runId && !target.id && <button type="button" className="text-button" onClick={() => { setTarget({ mission:'tess',id:'50365310' }); setEvidence('combined'); setMapSelected(null); }}>Try example TIC 50365310</button>}
       </form>
       {!runId && mapSelected && <section className="selection-card" aria-label="Selected map star">
@@ -230,27 +276,31 @@ export default function Start() {
           <ul className="map-targets" aria-label="Stars in searched region">{visibleMapTargets.map(star => <li key={star.id}><button type="button" aria-pressed={mapSelected?.id === star.id} onClick={() => chooseMapStar(star.id)}><span>TIC {star.id}</span><small>mag {star.magnitude?.toFixed(1) ?? '?'}</small></button></li>)}</ul>
         </>}
       </section>}
-      {recent.length > 0 && <details className="recent-runs"><summary>Recent runs</summary><ul>{recent.map(item => <li key={item.id}><button type="button" disabled={actionInFlight} onClick={() => openSavedRun(item.id)}><span>{item.target.namespace} {item.target.id}</span><small>{item.has_evidence ? 'Evidence saved' : item.status.replaceAll('_',' ')} / {new Date(item.created * 1000).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit' })}</small></button></li>)}</ul></details>}
-      {historyError && <p className="muted">Saved runs are unavailable while the service is disconnected.</p>}
-      <p className="sidebar-note">Sky imagery, observations and model scores are separate evidence sources. A score does not confirm a planet.</p>
-    </aside>
+    </aside>}
     <section className="workbench-content">
-      <header className="view-header"><div className="view-switch" aria-label="Workspace view"><button type="button" aria-pressed={pane === 'map'} onClick={() => { setMapMounted(true); setPane('map'); }}>Sky map</button><button type="button" aria-pressed={pane === 'evidence'} onClick={() => setPane('evidence')}>Evidence</button></div><span className="current-target">{targetLabel}</span>{runId && <button type="button" className="mobile-target-action secondary" disabled={actionInFlight} onClick={back}>{activeRun ? 'Cancel' : !run ? 'Leave run' : 'New target'}</button>}</header>
+      {showRunWorkspace && <header className="run-heading">
+        <div>{mission && <p>{mission === 'tess' ? 'TESS' : 'Kepler'} · {checking ? 'Repeatability check' : 'Target analysis'}</p>}
+        <h1>{targetLabel}</h1></div>
+        {runId && <button type="button" className="secondary" disabled={actionInFlight} onClick={back}><LuArrowLeft aria-hidden="true" />{backLabel}</button>}
+      </header>}
       {pane === 'map' && !runId && <div className="map-analysis-action">
         <button type="button" className="secondary" onClick={searchMap} disabled={actionInFlight || !region || region.radius > .5 || discovery.status === 'loading'}>
-          {discovery.status === 'loading' ? 'Searching region?' : 'Search this view'}
+          {discovery.status === 'loading' ? 'Searching…' : 'Search this view'}
         </button>
         {mapSelected ? <button type="button" disabled={actionInFlight} onClick={() => submit(null, { mission: 'tess', id: mapSelected.id, evidence: 'combined', model_name: modelName.trim() })}>Analyze TIC {mapSelected.id}</button>
           : <span>{region?.radius > .5 ? 'Zoom in to search' : 'Select a star marker'}</span>}
       </div>}
-      <div className="map-stage" hidden={pane !== 'map'}>{mapMounted && <SkyAtlas target={atlasTarget} fov={.5} stars={runId || submitting ? [] : mapTargets} selectedId={mapSelected?.id} onViewChange={onMapView} onSelect={chooseMapStar} onTargetsVisible={onTargetsVisible} />}</div>
+      <div className="map-stage" hidden={pane !== 'map'}>{(mapMounted || !runId) && <SkyAtlas target={atlasTarget} fov={.5} stars={runId || submitting ? [] : mapTargets} selectedId={mapSelected?.id} onViewChange={onMapView} onSelect={chooseMapStar} onTargetsVisible={onTargetsVisible} />}</div>
       <div ref={evidencePane} className="evidence-stage" hidden={pane !== 'evidence'}>
         {connectionError && <div role="alert" className="error-card"><h2>Connection interrupted</h2><p>{connectionError}</p><button onClick={() => { setPollError(null); setPollVersion(value => value+1); }}>Reconnect to saved run</button> <button type="button" className="secondary" disabled={actionInFlight} onClick={returnToTarget}>Back to target selection</button></div>}
         {actionError && <div role="alert" className="error-card"><h2>{transfer.status === 'submit_error' ? 'Could not start analysis' : 'Could not cancel analysis'}</h2><p>{actionError}</p>{transfer.status === 'submit_error' && <button onClick={() => submit(null, transfer.spec, transfer.upload)}>Retry starting analysis</button>}</div>}
-        {busy && <section className="loading-evidence" aria-live="polite"><span className="status-chip">{run?.status === 'accepted' && !submitting ? 'Queued' : 'Working'}</span><h2>{cancelling ? 'Cancelling analysis' : 'Loading evidence'}</h2><p>{submitting ? 'Starting a saved analysis run?' : cancelling ? 'Waiting for the service to confirm cancellation.' : stageLabels[run?.stage] || 'Contacting the analysis service?'}</p></section>}
-        {!submitting && run?.error && <section className="error-card" role="alert"><span className="eyebrow">{run.status === 'insufficient_evidence' ? 'No usable evidence returned' : 'Source request failed'}</span><h2>{run.error.code === 'upstream_unavailable' ? 'The archive did not respond' : 'This run could not finish'}</h2><p>{run.error.message}</p><p className="muted">This is a data-acquisition issue, not a planetary verdict.</p><button onClick={retryRun} disabled={submitting || (run.spec?.evidence === 'upload' && !file)}>Retry this target</button>{run.spec?.evidence === 'upload' && !file && <p>Change target to reselect your FITS file.</p>}</section>}
-        {hasResult && <EvidenceResults run={run} onCheck={actionInFlight ? undefined : () => submit(null, { parent_run: run.id })} onRetry={(sourceFailed || canUpdate) && !actionInFlight ? retryRun : undefined} retryLabel={canUpdate ? 'Run updated analysis' : undefined} />}
-        {!busy && !run?.error && !hasResult && !connectionError && !actionError && <section className="empty-evidence"><p className="eyebrow">Observation workspace</p><h2>{run?.status === 'cancelled' ? 'Run cancelled' : 'Choose a target to begin'}</h2><p>Load an observation to see the measured light curve, source metadata and downloadable data here.</p><button type="button" className="secondary" onClick={() => { setMapMounted(true); setPane('map'); }}>Explore the sky map</button></section>}
+        <div role="status" className={activity ? 'loading-evidence' : undefined}>
+          {activity && <><h2>{activity.title}</h2><span className="loading-track" aria-hidden="true" />{activity.detail && <p>{activity.detail}</p>}</>}
+          {!activity && hasResult && <span className="workbench-visually-hidden">Evidence ready.</span>}
+        </div>
+        {!activity && run?.error && <section className="error-card" role="alert"><h2>{run.error.code === 'upstream_unavailable' ? 'The archive did not respond' : run.status === 'insufficient_evidence' ? 'No usable evidence returned' : 'This run could not finish'}</h2><p>{run.error.message}</p><button onClick={retryRun} disabled={run.spec?.evidence === 'upload' && !file}>Retry this target</button>{run.spec?.evidence === 'upload' && !file && <p>Change target to reselect your FITS file.</p>}</section>}
+        {!activity && hasResult && <EvidenceResults key={run.id} run={run} onCheck={() => submit(null, { parent_run: run.id })} onRetry={sourceFailed || canUpdate ? retryRun : undefined} retryLabel={canUpdate ? 'Run updated analysis' : undefined} />}
+        {!activity && !run?.error && !hasResult && !connectionError && !actionError && <section className="empty-evidence"><h2>{run?.status === 'cancelled' ? 'Run cancelled' : 'No saved evidence'}</h2><button type="button" className="secondary" onClick={returnToTarget}>Choose a target</button></section>}
       </div>
     </section>
   </main>;

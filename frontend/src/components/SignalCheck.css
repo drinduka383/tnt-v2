@@ -1,0 +1,3 @@
+.signal-verdict[data-verdict='repeats'] h2 { color: #a5c7b0; }
+.signal-verdict[data-verdict='inconclusive'] h2 { color: #dfb47e; }
+.signal-raw th, .signal-raw td { white-space: nowrap; }

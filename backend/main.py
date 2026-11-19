@@ -146,6 +146,38 @@ def create_app(data_dir=None, pipeline=None, background=True):
             raise AnalysisError('This evidence file is not available.', 404, 'not_found')
         return send_file(path, as_attachment=True, download_name=path.name)
 
+    @app.get('/runs/<identifier>/signal-comparison.<extension>')
+    def signal_comparison(identifier, extension):
+        if extension not in {'json', 'png'}:
+            raise AnalysisError('Unknown comparison format.', 404, 'not_found')
+        run = runs.get(identifier)
+        spec = run['spec']
+        check = (run['result'] or {}).get('signal_check', {})
+        sector = check.get('independent_sector')
+        if run['status'] != 'succeeded' or spec.get('evidence') != 'signal_check' or not check.get('independent_source'):
+            raise AnalysisError('No independent observation was saved for this check.', 404, 'not_found')
+        parent = runs.get(spec['parent_run'])
+        original = runs.root / parent['id'] / 'lightcurve.csv'
+        directory = runs.root / identifier / 'downloads'
+        paths = [*directory.glob('*.fits'), *directory.glob('*.fits.gz')]
+        if (not original.is_file() or not original.resolve().is_relative_to(original.parent.resolve())
+                or len(paths) != 1 or not paths[0].resolve().is_relative_to(directory.resolve())):
+            raise AnalysisError('The saved comparison measurements are unavailable.', 404, 'not_found')
+        from src.services.signal_comparison import comparison_figure, comparison_samples
+        try:
+            samples, half, window = comparison_samples(original, paths[0], spec, sector)
+            if extension == 'json':
+                response = jsonify(window_hours=window, duration_hours=2 * half, series=[
+                    {'sector': group, 'hours': phase.tolist(), 'brightness_change_percent': brightness.tolist()}
+                    for group, (phase, brightness) in zip((spec['sector'], sector), samples)
+                ])
+                response.cache_control.max_age = 3600
+                return response
+            image = comparison_figure(samples, half, window, spec['sector'], sector)
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            raise AnalysisError('The saved observations cannot be plotted together.', 422, 'comparison_unavailable') from error
+        return send_file(image, mimetype='image/png', max_age=3600)
+
     @app.post('/runs/<identifier>/cancel')
     def cancel(identifier):
         return jsonify(runs.cancel(identifier))
